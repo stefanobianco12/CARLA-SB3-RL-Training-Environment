@@ -3,6 +3,8 @@ import argparse
 import pandas as pd
 import numpy as np
 import config
+import torch
+from attack import fgsm_attack,critic_attack,pgd_attack,targeted_fgsm,MAD_attack,PGD,critic,MAD
 
 parser = argparse.ArgumentParser(description="Eval a CARLA agent")
 parser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
@@ -28,15 +30,28 @@ from carla_env.envs.carla_route_env import CarlaRouteEnv
 from eval_plots import plot_eval, summary_eval
 
 from config import CONFIG
+from PIL import Image
+
+def save_image(latent,folder,cont):
+    tensor = latent.detach().cpu().squeeze(0)  # [3, 80, 160]
+
+    # Convert to numpy and scale to [0, 255]
+    np_image = tensor.permute(1, 2, 0).numpy()  # [80, 160, 3]
+    np_image = (np_image * 255).clip(0, 255).astype(np.uint8)
+
+    # Create and save image
+    img = Image.fromarray(np_image)
+    img.save(f"./{folder}/{cont}.png")
 
 
-def run_eval(env, model, model_path=None, record_video=False):
+def run_eval(env, model, vae, model_path=None, record_video=False):
     model_name = os.path.basename(model_path)
     log_path = os.path.join(os.path.dirname(model_path), 'eval')
     os.makedirs(log_path, exist_ok=True)
     video_path = os.path.join(log_path, model_name.replace(".zip", "_eval.avi"))
     csv_path = os.path.join(log_path, model_name.replace(".zip", "_eval.csv"))
     model_id = f"{model_path.split('/')[-2]}-{model_name.split('_')[-2]}"
+    agent_name=model_id.split('_')[0]
     # vec_env = model.get_env()
     state = env.reset()
     rendered_frame = env.render(mode="rgb_array")
@@ -61,10 +76,28 @@ def run_eval(env, model, model_path=None, record_video=False):
     # While non-terminal state
     print("Episode ", episode_idx)
     saved_route = False
-    while episode_idx < 4:
+    cont=0
+    while episode_idx < 6:
         env.extra_info.append("Evaluation")
-        action, _states = model.predict(state, deterministic=True)
+        state_tensor=model.policy.obs_to_tensor(state)  #T
+        if agent_name== "PPO":
+            logit, values, log_prob= model.policy(state_tensor[0], deterministic=True)
+            action,_states= model.predict(state, deterministic=True)
+            action=torch.tensor(action, dtype=torch.float32).unsqueeze(0).to('cuda')
+        elif agent_name=="SAC":
+            action, logit, log_std = model.actor.grad_forward_pass(state_tensor[0], deterministic=False)
+
+        #action,_states,logit = model.predict(state_tensor, deterministic=True,flag=True)
+        #action, logit, log_std = model.actor.grad_forward_pass(state_tensor[0], deterministic=False)
+        #state=fgsm_attack(model,state_tensor[0],action,logit,0.05,agent_name)
+        state=PGD(model,state_tensor[0],action,0.1,agent_name)
+        #state=critic(model,state_tensor[0],0.1)
+        #state=MAD(model,state_tensor[0],0.1)
+
+
+        action,_states= model.predict(state, deterministic=True)
         state, reward, dones, info = env.step(action)
+        cont+=1
         if env.step_count >= 150 and env.current_waypoint_index == 0:
             dones = True
 
@@ -145,4 +178,4 @@ if __name__ == "__main__":
 
     model = AlgorithmRL.load(model_path, env=env, device='cuda')
 
-    run_eval(env, model, model_path, record_video=args['no_record_video'])
+    run_eval(env, model, vae, model_path, record_video=args['no_record_video'])

@@ -7,10 +7,12 @@ import gym
 import pygame
 import cv2
 from pygame.locals import *
+import matplotlib.pyplot as plt
 
 from carla_env.tools.hud import HUD
 from carla_env.navigation.planner import RoadOption, compute_route_waypoints
 from carla_env.wrappers import *
+
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -25,7 +27,7 @@ import itertools
 
 intersection_routes = itertools.cycle(
     [(57, 81), (70, 11), (70, 12), (78, 68), (74, 41), (42, 73), (71, 62), (74, 40), (71, 77), (6, 12), (65, 52), (63, 80)])
-eval_routes = itertools.cycle([(48, 21), (0, 72), (28, 83), (61, 39)])
+eval_routes = itertools.cycle([(48, 21),(30, 48), (0, 72), (28, 83), (61, 39), (42,21)])
 
 discrete_actions = {
     0: [-1, 1], 1: [0, 1], 2: [1, 1], 3: [0, 0],
@@ -337,8 +339,15 @@ class CarlaRouteEnv(gym.Env):
 
         # Get most recent observation and viewer image
         self.observation = self._get_observation()
+
+        #print("GET OBS")
+        #print(self.observation.shape)
+        #plt.imsave('observation.png', self.observation)
+        #input("ALT")
         if self.activate_spectator:
             self.viewer_image = self._get_viewer_image()
+        #    print("GET VIEWER")
+        #    print(self.viewer_image.shape)
 
         if self.activate_lidar:
             self.lidar_data = self._get_lidar_data()
