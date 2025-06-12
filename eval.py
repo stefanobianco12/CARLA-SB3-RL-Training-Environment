@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import config
 import torch
-from attack import fgsm_attack,critic_attack,pgd_attack,targeted_fgsm,MAD_attack,PGD,critic,MAD
+from attack import fgsm_attack,PGD,critic,MAD
 
 parser = argparse.ArgumentParser(description="Eval a CARLA agent")
 parser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
@@ -14,6 +14,7 @@ parser.add_argument("--no_render", action="store_false", help="If True, render t
 parser.add_argument("--fps", type=int, default=15, help="FPS to render the environment")
 parser.add_argument("--no_record_video", action="store_false", help="If True, record video of the evaluation")
 parser.add_argument("--config", type=str, default="1", help="Config to use (default: 1)")
+parser.add_argument("--atk", type=str, default=None)
 
 args = vars(parser.parse_args())
 config.set_config(args["config"])
@@ -79,20 +80,23 @@ def run_eval(env, model, vae, model_path=None, record_video=False):
     cont=0
     while episode_idx < 6:
         env.extra_info.append("Evaluation")
-        state_tensor=model.policy.obs_to_tensor(state)  #T
-        if agent_name== "PPO":
-            logit, values, log_prob= model.policy(state_tensor[0], deterministic=True)
-            action,_states= model.predict(state, deterministic=True)
-            action=torch.tensor(action, dtype=torch.float32).unsqueeze(0).to('cuda')
-        elif agent_name=="SAC":
-            action, logit, log_std = model.actor.grad_forward_pass(state_tensor[0], deterministic=False)
+        if args['atk'] is not None:
+            state_tensor=model.policy.obs_to_tensor(state)  
+            if agent_name== "PPO":
+                logit, values, log_prob= model.policy(state_tensor[0], deterministic=True)
+                action,_states= model.predict(state, deterministic=True)
+                action=torch.tensor(action, dtype=torch.float32).unsqueeze(0).to('cuda')
+            elif agent_name=="SAC":
+                action, logit, log_std = model.actor.grad_forward_pass(state_tensor[0], deterministic=False)
 
-        #action,_states,logit = model.predict(state_tensor, deterministic=True,flag=True)
-        #action, logit, log_std = model.actor.grad_forward_pass(state_tensor[0], deterministic=False)
-        #state=fgsm_attack(model,state_tensor[0],action,logit,0.05,agent_name)
-        state=PGD(model,state_tensor[0],action,0.1,agent_name)
-        #state=critic(model,state_tensor[0],0.1)
-        #state=MAD(model,state_tensor[0],0.1)
+            
+            if args['atk']=="FGSM":
+                state=fgsm_attack(model,state_tensor[0],action,logit,0.4,agent_name)
+            elif args['atk']=="PGD":
+                state=PGD(model,state_tensor[0],action,0.1,agent_name)
+            elif args['atk']=="Critic":
+               state=critic(model,state_tensor[0],0.1)
+            #state=MAD(model,state_tensor[0],0.1)
 
 
         action,_states= model.predict(state, deterministic=True)
