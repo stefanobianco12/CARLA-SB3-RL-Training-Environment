@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import config
 import torch
-from attack import fgsm_attack,PGD,critic,MAD
+from attack import fgsm_attack,PGD,critic,MAD,pgd_attack_mad,fgsm_attack_MAD
 
 parser = argparse.ArgumentParser(description="Eval a CARLA agent")
 parser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
@@ -88,6 +88,9 @@ def run_eval(env, model, vae, model_path=None, record_video=False):
                 action=torch.tensor(action, dtype=torch.float32).unsqueeze(0).to('cuda')
             elif agent_name=="SAC":
                 action, logit, log_std = model.actor.grad_forward_pass(state_tensor[0], deterministic=False)
+            elif agent_name=="DDPG":
+                action= model.policy(state_tensor[0])
+                #action=torch.tensor(action, dtype=torch.float32).unsqueeze(0).to('cuda')
 
             
             if args['atk']=="FGSM":
@@ -96,6 +99,9 @@ def run_eval(env, model, vae, model_path=None, record_video=False):
                 state=PGD(model,state_tensor[0],action,0.1,agent_name)
             elif args['atk']=="Critic":
                state=critic(model,state_tensor[0],0.1)
+            elif args['atk']=="MAD":
+                #state=pgd_attack_mad(model,state_tensor[0],action,0.4,agent_name)
+                state=fgsm_attack_MAD(model,state_tensor[0],action,0.4,agent_name)
             #state=MAD(model,state_tensor[0],0.1)
 
 

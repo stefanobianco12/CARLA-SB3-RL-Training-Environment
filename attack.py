@@ -54,7 +54,76 @@ def fgsm_attack(model,state, action, logit,epsilon,agent_name):
     return perturbed_state
 
 
+def fgsm_attack_MAD(model,state, action,epsilon,agent_name):
 
+        # Clone the original tensors
+    vae_orig = state['vae_latent'].detach()
+    vehicle_orig = state['vehicle_measures'].detach()
+    if agent_name=="PPO":
+        waypoint_orig=state['waypoints'].detach()
+
+    # Initialize perturbations randomly within the epsilon ball
+    vae_adv = vae_orig + (2 * epsilon) * (torch.rand_like(vae_orig) - 0.5)
+    vae_adv = torch.clamp(vae_adv, vae_orig - epsilon, vae_orig + epsilon)
+
+    vehicle_adv = vehicle_orig + (2 * epsilon) * (torch.rand_like(vehicle_orig) - 0.5)
+    vehicle_adv = torch.clamp(vehicle_adv, vehicle_orig - epsilon, vehicle_orig + epsilon)
+
+    if agent_name=="PPO":
+        waypoint_adv = waypoint_orig + (2 * epsilon) * (torch.rand_like(waypoint_orig) - 0.5)
+        waypoint_adv = torch.clamp(waypoint_adv, waypoint_orig - epsilon, waypoint_orig + epsilon)
+
+     # Prepare state copy
+    state_copy = state.copy()
+    state_copy['vae_latent'] = vae_adv
+    state_copy['vehicle_measures'] = vehicle_adv
+    if agent_name=="PPO":
+        state_copy['waypoints'] = waypoint_adv
+    
+    action_adv = model.policy(state_copy)   
+    loss = torch.nn.functional.mse_loss(action_adv, action)
+    model.policy.zero_grad()
+    loss.backward(retain_graph=True)
+    vae_latent_grad = state['vae_latent'].grad.data
+    perturbed_vae = torch.clamp(
+        state['vae_latent'] + epsilon * vae_latent_grad.sign(),
+        state['vae_latent'] - epsilon,
+        state['vae_latent'] + epsilon
+    ).detach()
+
+    # Perturb vehicle_measures
+    vehicle_measures_grad = state['vehicle_measures'].grad.data
+    perturbed_vehicle = torch.clamp(
+        state['vehicle_measures'] + epsilon * vehicle_measures_grad.sign(),
+        state['vehicle_measures'] - epsilon,
+        state['vehicle_measures'] + epsilon
+    ).detach()
+
+    if agent_name=="PPO":
+        waypoint_measures_grad = state['waypoints'].grad.data
+        perturbed_waypoint = torch.clamp(
+        state['waypoints'] + epsilon * waypoint_measures_grad.sign(),
+        state['waypoints'] - epsilon,
+        state['waypoints'] + epsilon
+        ).detach()
+        perturbed_waypoint=perturbed_waypoint.squeeze(0).detach().cpu().numpy()
+    
+    perturbed_vae=perturbed_vae.detach().cpu().numpy().astype('float32').flatten()
+    perturbed_vehicle=perturbed_vehicle.detach().cpu().numpy().flatten().tolist()
+    
+    if agent_name=="PPO":
+        perturbed_state = {
+        'vae_latent': perturbed_vae,
+        'vehicle_measures': perturbed_vehicle,
+        'waypoints': perturbed_waypoint
+        }
+    else:
+        perturbed_state = {
+        'vae_latent': perturbed_vae,
+        'vehicle_measures': perturbed_vehicle,
+        'maneuver': state['maneuver'].item()
+        }
+    return perturbed_state
 
 
 
@@ -253,4 +322,79 @@ def critic(model,state,epsilon):
     return perturbed_state
 
 
+def pgd_attack_mad(model, state, action, epsilon,agent_name):
+    K = 20
+    eta = 3.5 * epsilon / K
+
+    # Clone the original tensors
+    vae_orig = state['vae_latent'].detach()
+    vehicle_orig = state['vehicle_measures'].detach()
+    if agent_name=="PPO":
+        waypoint_orig=state['waypoints'].detach()
+
+    # Initialize perturbations randomly within the epsilon ball
+    vae_adv = vae_orig + (2 * epsilon) * (torch.rand_like(vae_orig) - 0.5)
+    vae_adv = torch.clamp(vae_adv, vae_orig - epsilon, vae_orig + epsilon)
+
+    vehicle_adv = vehicle_orig + (2 * epsilon) * (torch.rand_like(vehicle_orig) - 0.5)
+    vehicle_adv = torch.clamp(vehicle_adv, vehicle_orig - epsilon, vehicle_orig + epsilon)
+
+    if agent_name=="PPO":
+        waypoint_adv = waypoint_orig + (2 * epsilon) * (torch.rand_like(waypoint_orig) - 0.5)
+        waypoint_adv = torch.clamp(waypoint_adv, waypoint_orig - epsilon, waypoint_orig + epsilon)
+
+    for _ in range(K):
+        vae_adv.requires_grad_(True)
+        vehicle_adv.requires_grad_(True)
+        if agent_name=="PPO":
+            waypoint_adv.requires_grad_(True)
+
+        # Prepare state copy
+        state_copy = state.copy()
+        state_copy['vae_latent'] = vae_adv
+        state_copy['vehicle_measures'] = vehicle_adv
+        if agent_name=="PPO":
+            state_copy['waypoints'] = waypoint_adv
+
+        action_adv = model.policy(state_copy)        # π(s_hat)
+        loss = torch.nn.functional.mse_loss(action_adv, action)
+        model.policy.zero_grad()
+        loss.backward(retain_graph=True)
+
+        # Gradient-based updates
+        vae_adv_grad = vae_adv.grad.data
+        vehicle_adv_grad = vehicle_adv.grad.data
+        if agent_name== "PPO":
+            waypoint_adv_grad = waypoint_adv.grad.data
+
+        vae_adv = vae_adv + eta * vae_adv_grad.sign()
+        vae_adv = torch.clamp(vae_adv, vae_orig - epsilon, vae_orig + epsilon).detach()
+
+        vehicle_adv = vehicle_adv + eta * vehicle_adv_grad.sign()
+        vehicle_adv = torch.clamp(vehicle_adv, vehicle_orig - epsilon, vehicle_orig + epsilon).detach()
+
+        if agent_name== "PPO":
+            waypoint_adv = waypoint_adv + eta * waypoint_adv_grad.sign()
+            waypoint_adv = torch.clamp(waypoint_adv, waypoint_orig - epsilon, waypoint_orig + epsilon).detach()
+
+    # Convert to numpy as in FGSM
+    perturbed_vae = vae_adv.detach().cpu().numpy().astype('float32').flatten()
+    perturbed_vehicle = vehicle_adv.detach().cpu().numpy().flatten().tolist()
+    if agent_name== "PPO":
+        perturbed_waypoint=waypoint_adv.squeeze(0).detach().cpu().numpy()
+
+    if agent_name=="PPO":
+        perturbed_state = {
+        'vae_latent': perturbed_vae,
+        'vehicle_measures': perturbed_vehicle,
+        'waypoints': perturbed_waypoint
+        }
+    else:
+        perturbed_state = {
+        'vae_latent': perturbed_vae,
+        'vehicle_measures': perturbed_vehicle,
+        'maneuver': state['maneuver'].item()
+        }
+
+    return perturbed_state
 

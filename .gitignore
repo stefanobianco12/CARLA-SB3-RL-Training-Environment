@@ -7,3 +7,6 @@ __pycache__
 *.avi
 
 
+tensorboard/DDPG_1682316947_id6/eval/model_1000000_steps_eval_summary.csv
+tensorboard/DDPG_1682316947_id6/eval/model_1000000_steps_eval.csv
+tensorboard/DDPG_1682316947_id6/eval/model_1000000_steps_eval.png
